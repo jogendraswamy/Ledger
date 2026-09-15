@@ -16,7 +16,15 @@
         <h1 class="text-2xl font-bold text-slate-700">Financial Ledger FY26-27</h1>
         <div class="flex flex-wrap gap-4 items-center">
             <button onclick="toggleSettings()" class="text-slate-500 hover:text-slate-800 font-semibold underline text-sm">GitHub Settings</button>
-            <input type="file" id="csvFileInput" accept=".csv" class="block w-full md:w-auto text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+            
+            <!-- Upload Previous Transactions -->
+            <div class="relative">
+                <input type="file" id="csvFileInput" accept=".csv" class="hidden">
+                <button onclick="document.getElementById('csvFileInput').click()" class="bg-slate-200 text-slate-700 px-5 py-2 rounded-full font-semibold hover:bg-slate-300 transition">
+                    Upload Previous Transactions (CSV)
+                </button>
+            </div>
+            
             <button onclick="syncToGitHub()" id="syncBtn" class="bg-green-600 text-white px-5 py-2 rounded-full font-semibold hover:bg-green-700 transition">Sync to GitHub</button>
         </div>
     </div>
@@ -88,6 +96,7 @@
                     <option value="Utilities"></option>
                     <option value="Travel"></option>
                     <option value="Agriculture / Farm"></option>
+                    <option value="Loan EMI"></option>
                     <option value="Other"></option>
                 </datalist>
                 <div><label class="text-sm font-medium text-slate-600">Account / Party</label><input type="text" id="t-account" required class="w-full mt-1 p-2 border rounded-md"></div>
@@ -122,7 +131,7 @@
     let transactions = [];
     let chartInstance = null;
 
-    // Load GitHub Settings
+    // Load Default Data & GitHub Settings
     window.onload = () => {
         document.getElementById('t-date').valueAsDate = new Date();
         document.getElementById('gh-owner').value = localStorage.getItem('gh-owner') || '';
@@ -146,13 +155,15 @@
         toggleSettings();
     }
 
-    // Ledger functionality (Add, Delete, Render, Chart)
     function addEntry(e) {
         e.preventDefault();
         const entry = {
-            Date: document.getElementById('t-date').value, Type: document.getElementById('t-type').value,
-            Category: document.getElementById('t-category').value, Account: document.getElementById('t-account').value,
-            Description: document.getElementById('t-desc').value, Amount: parseFloat(document.getElementById('t-amount').value)
+            Date: document.getElementById('t-date').value, 
+            Type: document.getElementById('t-type').value,
+            Category: document.getElementById('t-category').value, 
+            Account: document.getElementById('t-account').value,
+            Description: document.getElementById('t-desc').value, 
+            Amount: parseFloat(document.getElementById('t-amount').value)
         };
         transactions.push(entry);
         document.getElementById('entryForm').reset();
@@ -169,6 +180,8 @@
         let inc = 0, exp = 0, rec = 0, debt = 0;
         const tbody = document.getElementById('ledger-body');
         tbody.innerHTML = '';
+        
+        // Sort by Date Descending
         transactions.sort((a, b) => new Date(b.Date) - new Date(a.Date));
         
         transactions.forEach((t, index) => {
@@ -202,11 +215,38 @@
         }, options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }});
     }
 
-    // File Import
+    // Smart CSV Upload (Append vs Replace)
     document.getElementById('csvFileInput').addEventListener('change', function(e) {
-        Papa.parse(e.target.files[0], { header: true, dynamicTyping: true, skipEmptyLines: true,
-            complete: function(results) { transactions = results.data; updateDashboard(); }
+        const file = e.target.files[0];
+        if(!file) return;
+
+        Papa.parse(file, { 
+            header: true, 
+            dynamicTyping: true, 
+            skipEmptyLines: true,
+            complete: function(results) { 
+                // Basic validation: check if the 'Amount' column exists
+                if (results.data.length > 0 && results.data[0].Amount !== undefined) {
+                    if (transactions.length > 0) {
+                        const append = confirm("You already have transactions loaded. Do you want to APPEND the uploaded file to your existing data?\n\nClick 'OK' to Append.\nClick 'Cancel' to Overwrite.");
+                        if (append) {
+                            transactions = transactions.concat(results.data);
+                        } else {
+                            transactions = results.data;
+                        }
+                    } else {
+                        transactions = results.data;
+                    }
+                    updateDashboard();
+                    alert("Transactions loaded successfully!");
+                } else {
+                    alert("Invalid CSV format! Make sure it was generated by this Ledger app.");
+                }
+            }
         });
+        
+        // Reset the file input so you can select the same file again if needed
+        e.target.value = '';
     });
 
     // GitHub API Synchronization
@@ -229,9 +269,7 @@
         btn.disabled = true;
 
         try {
-            // 1. Convert Data to CSV and Base64 Encode it
             const csvData = Papa.unparse(transactions);
-            // Handling unicode characters correctly for Base64 in browser
             const contentEncoded = btoa(new Uint8Array(new TextEncoder().encode(csvData)).reduce((data, byte) => data + String.fromCharCode(byte), ''));
 
             const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
@@ -241,7 +279,6 @@
                 "Content-Type": "application/json"
             };
 
-            // 2. Fetch the existing file SHA (required by GitHub to update a file)
             let fileSha = null;
             const getResp = await fetch(apiUrl, { method: "GET", headers: headers });
             
@@ -252,14 +289,12 @@
                 throw new Error("Failed to fetch file status from GitHub.");
             }
 
-            // 3. Prepare Commit Payload
             const body = {
                 message: `Update ledger on ${new Date().toLocaleString()}`,
                 content: contentEncoded
             };
-            if (fileSha) body.sha = fileSha; // Append SHA if we are overwriting an existing file
+            if (fileSha) body.sha = fileSha;
 
-            // 4. Push to GitHub
             const putResp = await fetch(apiUrl, {
                 method: "PUT",
                 headers: headers,
