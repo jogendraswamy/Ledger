@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Financial Ledger & Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+</head>
+<body class="bg-slate-50 font-sans text-slate-800">
+
+<div class="max-w-7xl mx-auto p-6">
+    <!-- Header & GitHub Sync Controls -->
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 bg-white p-4 rounded-xl shadow-sm gap-4">
+        <h1 class="text-2xl font-bold text-slate-700">Financial Ledger FY26-27</h1>
+        <div class="flex flex-wrap gap-4 items-center">
+            <button onclick="toggleSettings()" class="text-slate-500 hover:text-slate-800 font-semibold underline text-sm">GitHub Settings</button>
+            <input type="file" id="csvFileInput" accept=".csv" class="block w-full md:w-auto text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+            <button onclick="syncToGitHub()" id="syncBtn" class="bg-green-600 text-white px-5 py-2 rounded-full font-semibold hover:bg-green-700 transition">Sync to GitHub</button>
+        </div>
+    </div>
+
+    <!-- GitHub Settings Panel (Hidden by default) -->
+    <div id="github-settings" class="hidden bg-slate-100 p-6 rounded-xl border border-slate-300 mb-8">
+        <h2 class="text-lg font-bold mb-4">GitHub Sync Settings</h2>
+        <p class="text-sm text-slate-600 mb-4">These credentials are saved locally in your browser and never sent anywhere except directly to GitHub.</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="text-sm font-medium text-slate-600">GitHub Username</label>
+                <input type="text" id="gh-owner" placeholder="e.g. your-username" class="w-full mt-1 p-2 border rounded-md">
+            </div>
+            <div>
+                <label class="text-sm font-medium text-slate-600">Repository Name</label>
+                <input type="text" id="gh-repo" placeholder="e.g. my-ledger-app" class="w-full mt-1 p-2 border rounded-md">
+            </div>
+            <div>
+                <label class="text-sm font-medium text-slate-600">File Path</label>
+                <input type="text" id="gh-path" placeholder="e.g. Ledger.csv" value="Ledger.csv" class="w-full mt-1 p-2 border rounded-md">
+            </div>
+            <div>
+                <label class="text-sm font-medium text-slate-600">Personal Access Token (PAT)</label>
+                <input type="password" id="gh-token" placeholder="github_pat_..." class="w-full mt-1 p-2 border rounded-md">
+            </div>
+        </div>
+        <button onclick="saveSettings()" class="mt-4 bg-slate-800 text-white px-4 py-2 rounded-md font-semibold hover:bg-slate-900">Save Settings</button>
+    </div>
+
+    <!-- Dashboard Summary Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div class="bg-white p-6 rounded-xl shadow-sm border-l-4 border-blue-500">
+            <h3 class="text-sm text-slate-500 font-medium">Total Income</h3>
+            <p class="text-2xl font-bold text-slate-800" id="card-income">₹0</p>
+        </div>
+        <div class="bg-white p-6 rounded-xl shadow-sm border-l-4 border-red-500">
+            <h3 class="text-sm text-slate-500 font-medium">Total Expenses</h3>
+            <p class="text-2xl font-bold text-slate-800" id="card-expense">₹0</p>
+        </div>
+        <div class="bg-white p-6 rounded-xl shadow-sm border-l-4 border-green-500">
+            <h3 class="text-sm text-slate-500 font-medium">Receivables (Dues)</h3>
+            <p class="text-2xl font-bold text-slate-800" id="card-receivable">₹0</p>
+        </div>
+        <div class="bg-white p-6 rounded-xl shadow-sm border-l-4 border-orange-500">
+            <h3 class="text-sm text-slate-500 font-medium">Payables (Debt)</h3>
+            <p class="text-2xl font-bold text-slate-800" id="card-debt">₹0</p>
+        </div>
+    </div>
+
+    <!-- Add Entry & Chart -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+        <div class="bg-white p-6 rounded-xl shadow-sm lg:col-span-1">
+            <h2 class="text-lg font-bold mb-4">Add Entry</h2>
+            <form id="entryForm" onsubmit="addEntry(event)" class="flex flex-col gap-3">
+                <div><label class="text-sm font-medium text-slate-600">Date</label><input type="date" id="t-date" required class="w-full mt-1 p-2 border rounded-md"></div>
+                <div><label class="text-sm font-medium text-slate-600">Type</label>
+                    <select id="t-type" required class="w-full mt-1 p-2 border rounded-md">
+                        <option value="Income">Income</option>
+                        <option value="Expense">Expense</option>
+                        <option value="Receivable">Receivable (Due to me)</option>
+                        <option value="Debt">Debt (I owe)</option>
+                    </select>
+                </div>
+                <div><label class="text-sm font-medium text-slate-600">Category</label><input type="text" id="t-category" list="categories" required class="w-full mt-1 p-2 border rounded-md"></div>
+                <datalist id="categories">
+                    <option value="Salary / Business"></option>
+                    <option value="Trading"></option>
+                    <option value="Groceries"></option>
+                    <option value="Utilities"></option>
+                    <option value="Travel"></option>
+                    <option value="Agriculture / Farm"></option>
+                    <option value="Other"></option>
+                </datalist>
+                <div><label class="text-sm font-medium text-slate-600">Account / Party</label><input type="text" id="t-account" required class="w-full mt-1 p-2 border rounded-md"></div>
+                <div><label class="text-sm font-medium text-slate-600">Amount (₹)</label><input type="number" id="t-amount" step="0.01" required class="w-full mt-1 p-2 border rounded-md"></div>
+                <div><label class="text-sm font-medium text-slate-600">Description</label><input type="text" id="t-desc" class="w-full mt-1 p-2 border rounded-md"></div>
+                <button type="submit" class="mt-2 bg-blue-600 text-white p-2 rounded-md font-semibold hover:bg-blue-700">Add Transaction</button>
+            </form>
+        </div>
+        <div class="bg-white p-6 rounded-xl shadow-sm lg:col-span-2">
+            <h2 class="text-lg font-bold mb-4">Cashflow Overview</h2>
+            <canvas id="cashflowChart" height="100"></canvas>
+        </div>
+    </div>
+
+    <!-- Ledger Table -->
+    <div class="bg-white p-6 rounded-xl shadow-sm overflow-x-auto">
+        <h2 class="text-lg font-bold mb-4">Ledger Book</h2>
+        <table class="w-full text-left border-collapse">
+            <thead>
+                <tr class="bg-slate-100 text-slate-600 text-sm">
+                    <th class="p-3 border-b">Date</th><th class="p-3 border-b">Type</th><th class="p-3 border-b">Category</th>
+                    <th class="p-3 border-b">Account/Party</th><th class="p-3 border-b">Description</th><th class="p-3 border-b text-right">Amount</th>
+                    <th class="p-3 border-b text-center">Action</th>
+                </tr>
+            </thead>
+            <tbody id="ledger-body" class="text-sm"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    let transactions = [];
+    let chartInstance = null;
+
+    // Load GitHub Settings
+    window.onload = () => {
+        document.getElementById('t-date').valueAsDate = new Date();
+        document.getElementById('gh-owner').value = localStorage.getItem('gh-owner') || '';
+        document.getElementById('gh-repo').value = localStorage.getItem('gh-repo') || '';
+        document.getElementById('gh-path').value = localStorage.getItem('gh-path') || 'Ledger.csv';
+        document.getElementById('gh-token').value = localStorage.getItem('gh-token') || '';
+        updateDashboard();
+    };
+
+    function toggleSettings() {
+        const panel = document.getElementById('github-settings');
+        panel.classList.toggle('hidden');
+    }
+
+    function saveSettings() {
+        localStorage.setItem('gh-owner', document.getElementById('gh-owner').value.trim());
+        localStorage.setItem('gh-repo', document.getElementById('gh-repo').value.trim());
+        localStorage.setItem('gh-path', document.getElementById('gh-path').value.trim());
+        localStorage.setItem('gh-token', document.getElementById('gh-token').value.trim());
+        alert("Settings saved locally!");
+        toggleSettings();
+    }
+
+    // Ledger functionality (Add, Delete, Render, Chart)
+    function addEntry(e) {
+        e.preventDefault();
+        const entry = {
+            Date: document.getElementById('t-date').value, Type: document.getElementById('t-type').value,
+            Category: document.getElementById('t-category').value, Account: document.getElementById('t-account').value,
+            Description: document.getElementById('t-desc').value, Amount: parseFloat(document.getElementById('t-amount').value)
+        };
+        transactions.push(entry);
+        document.getElementById('entryForm').reset();
+        document.getElementById('t-date').valueAsDate = new Date();
+        updateDashboard();
+    }
+
+    function deleteEntry(index) {
+        transactions.splice(index, 1);
+        updateDashboard();
+    }
+
+    function updateDashboard() {
+        let inc = 0, exp = 0, rec = 0, debt = 0;
+        const tbody = document.getElementById('ledger-body');
+        tbody.innerHTML = '';
+        transactions.sort((a, b) => new Date(b.Date) - new Date(a.Date));
+        
+        transactions.forEach((t, index) => {
+            if(t.Type === 'Income') inc += t.Amount;
+            if(t.Type === 'Expense') exp += t.Amount;
+            if(t.Type === 'Receivable') rec += t.Amount;
+            if(t.Type === 'Debt') debt += t.Amount;
+            
+            let color = t.Type === 'Income' ? 'text-blue-600' : (t.Type === 'Expense' ? 'text-red-600' : 'text-slate-700');
+            tbody.innerHTML += `<tr class="border-b hover:bg-slate-50 transition">
+                <td class="p-3">${t.Date}</td><td class="p-3 font-semibold ${color}">${t.Type}</td>
+                <td class="p-3">${t.Category}</td><td class="p-3">${t.Account}</td><td class="p-3">${t.Description}</td>
+                <td class="p-3 text-right font-mono">₹${t.Amount.toFixed(2)}</td>
+                <td class="p-3 text-center"><button onclick="deleteEntry(${index})" class="text-red-500 font-bold">X</button></td>
+            </tr>`;
+        });
+
+        document.getElementById('card-income').innerText = `₹${inc.toLocaleString('en-IN')}`;
+        document.getElementById('card-expense').innerText = `₹${exp.toLocaleString('en-IN')}`;
+        document.getElementById('card-receivable').innerText = `₹${rec.toLocaleString('en-IN')}`;
+        document.getElementById('card-debt').innerText = `₹${debt.toLocaleString('en-IN')}`;
+        updateChart(inc, exp, rec, debt);
+    }
+
+    function updateChart(inc, exp, rec, debt) {
+        const ctx = document.getElementById('cashflowChart').getContext('2d');
+        if(chartInstance) chartInstance.destroy();
+        chartInstance = new Chart(ctx, { type: 'bar', data: {
+            labels: ['Income', 'Expenses', 'Receivables', 'Debts'],
+            datasets: [{ data: [inc, exp, rec, debt], backgroundColor: ['#3b82f6', '#ef4444', '#22c55e', '#f97316'], borderRadius: 4 }]
+        }, options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }});
+    }
+
+    // File Import
+    document.getElementById('csvFileInput').addEventListener('change', function(e) {
+        Papa.parse(e.target.files[0], { header: true, dynamicTyping: true, skipEmptyLines: true,
+            complete: function(results) { transactions = results.data; updateDashboard(); }
+        });
+    });
+
+    // GitHub API Synchronization
+    async function syncToGitHub() {
+        const owner = localStorage.getItem('gh-owner');
+        const repo = localStorage.getItem('gh-repo');
+        const path = localStorage.getItem('gh-path');
+        const token = localStorage.getItem('gh-token');
+
+        if (!owner || !repo || !path || !token) {
+            alert("Please configure GitHub settings first.");
+            toggleSettings();
+            return;
+        }
+
+        if (transactions.length === 0) return alert("No transactions to save.");
+
+        const btn = document.getElementById('syncBtn');
+        btn.innerText = "Syncing...";
+        btn.disabled = true;
+
+        try {
+            // 1. Convert Data to CSV and Base64 Encode it
+            const csvData = Papa.unparse(transactions);
+            // Handling unicode characters correctly for Base64 in browser
+            const contentEncoded = btoa(new Uint8Array(new TextEncoder().encode(csvData)).reduce((data, byte) => data + String.fromCharCode(byte), ''));
+
+            const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+            const headers = {
+                "Authorization": `token ${token}`,
+                "Accept": "application/vnd.github.v3+json",
+                "Content-Type": "application/json"
+            };
+
+            // 2. Fetch the existing file SHA (required by GitHub to update a file)
+            let fileSha = null;
+            const getResp = await fetch(apiUrl, { method: "GET", headers: headers });
+            
+            if (getResp.ok) {
+                const getResult = await getResp.json();
+                fileSha = getResult.sha;
+            } else if (getResp.status !== 404) {
+                throw new Error("Failed to fetch file status from GitHub.");
+            }
+
+            // 3. Prepare Commit Payload
+            const body = {
+                message: `Update ledger on ${new Date().toLocaleString()}`,
+                content: contentEncoded
+            };
+            if (fileSha) body.sha = fileSha; // Append SHA if we are overwriting an existing file
+
+            // 4. Push to GitHub
+            const putResp = await fetch(apiUrl, {
+                method: "PUT",
+                headers: headers,
+                body: JSON.stringify(body)
+            });
+
+            if (putResp.ok) {
+                alert("Successfully synced to GitHub!");
+            } else {
+                const errorData = await putResp.json();
+                alert(`Error syncing: ${errorData.message}`);
+            }
+
+        } catch (error) {
+            console.error(error);
+            alert("An error occurred during sync. Check console for details.");
+        } finally {
+            btn.innerText = "Sync to GitHub";
+            btn.disabled = false;
+        }
+    }
+</script>
+</body>
+</html>
