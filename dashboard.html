@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Financial Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans p-4 md:p-8">
+
+    <div class="max-w-6xl mx-auto">
+        <!-- Header -->
+        <header class="flex justify-between items-center mb-8">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-900">Financial Overview</h1>
+                <p class="text-gray-500 text-sm mt-1">Live data from Master Google Sheet</p>
+            </div>
+            <button onclick="fetchData()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow text-sm font-medium transition-colors">
+                Refresh Data
+            </button>
+        </header>
+
+        <!-- Loading State -->
+        <div id="loading" class="text-center py-12 hidden">
+            <p class="text-lg text-gray-500 animate-pulse">Syncing with ledger...</p>
+        </div>
+
+        <!-- Dashboard Grid -->
+        <div id="dashboard-content" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            <!-- Entities Chart Card -->
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <h2 class="text-lg font-semibold mb-4 text-gray-700">Expenses by Business Entity</h2>
+                <div class="relative h-64">
+                    <canvas id="entityChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Categories Chart Card -->
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <h2 class="text-lg font-semibold mb-4 text-gray-700">Expenses by Category</h2>
+                <div class="relative h-64">
+                    <canvas id="categoryChart"></canvas>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // INSERT YOUR GOOGLE APPS SCRIPT WEB APP URL HERE
+        const API_URL = 'https://script.google.com/macros/s/AKfycbz3yfV4alYc0kEO4QsbKfeXYn2F6I2T4h6zRJen8sQDtz9HtrX2aWRTraCOaLJ7-DdeDQ/exec';
+
+        let entityChartInstance = null;
+        let categoryChartInstance = null;
+
+        async function fetchData() {
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('dashboard-content').classList.add('opacity-50');
+
+            try {
+                const response = await fetch(API_URL);
+                const data = await response.json();
+                
+                renderCharts(data);
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                alert('Failed to load dashboard data. Check your Web App URL.');
+            } finally {
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('dashboard-content').classList.remove('opacity-50');
+            }
+        }
+
+        function renderCharts(data) {
+            const entityLabels = Object.keys(data.entities);
+            const entityValues = Object.values(data.entities);
+            
+            const categoryLabels = Object.keys(data.categories);
+            const categoryValues = Object.values(data.categories);
+
+            // Destroy existing charts to prevent hover glitches on refresh
+            if (entityChartInstance) entityChartInstance.destroy();
+            if (categoryChartInstance) categoryChartInstance.destroy();
+
+            // Common Chart.js options for clean UI
+            const commonOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 12 } }
+                }
+            };
+
+            // Entity Chart (Doughnut)
+            const ctxEntity = document.getElementById('entityChart').getContext('2d');
+            entityChartInstance = new Chart(ctxEntity, {
+                type: 'doughnut',
+                data: {
+                    labels: entityLabels,
+                    datasets: [{
+                        data: entityValues,
+                        backgroundColor: ['#1a73e8', '#34a853', '#fbbc04', '#ea4335', '#8ab4f8', '#81c995'],
+                        borderWidth: 0
+                    }]
+                },
+                options: commonOptions
+            });
+
+            // Category Chart (Bar)
+            const ctxCategory = document.getElementById('categoryChart').getContext('2d');
+            categoryChartInstance = new Chart(ctxCategory, {
+                type: 'bar',
+                data: {
+                    labels: categoryLabels,
+                    datasets: [{
+                        label: 'Total Spent (₹)',
+                        data: categoryValues,
+                        backgroundColor: '#1a73e8',
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    ...commonOptions,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: '#f3f4f6' } },
+                        x: { grid: { display: false } }
+                    }
+                }
+            });
+        }
+
+        // Fetch data automatically when the page loads
+        window.onload = fetchData;
+    </script>
+</body>
+</html>
