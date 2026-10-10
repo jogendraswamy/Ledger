@@ -12,7 +12,7 @@
     
     <!-- Upload Section -->
     <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-6">
-      <label class="block text-sm font-semibold text-slate-700 mb-2">Upload Bank Statement (e.g., Acct_Statement_XXXXXXXX5399...xls)</label>
+      <label class="block text-sm font-semibold text-slate-700 mb-2">Upload Bank Statement</label>
       <input type="file" id="fileUpload" accept=".xls,.xlsx,.csv" 
              class="block w-full border border-slate-300 rounded-lg shadow-sm p-2 text-sm cursor-pointer file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" />
     </div>
@@ -33,6 +33,18 @@
           <!-- Parsed rows injected here via JS -->
         </tbody>
       </table>
+      
+      <!-- Progress Bar (Hidden by default) -->
+      <div id="progressContainer" class="hidden mb-4">
+        <div class="flex justify-between mb-1">
+          <span class="text-sm font-medium text-indigo-700">Saving to Google Sheets...</span>
+          <span id="progressText" class="text-sm font-medium text-indigo-700">0%</span>
+        </div>
+        <div class="w-full bg-slate-200 rounded-full h-2.5">
+          <div id="progressBar" class="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+      </div>
+
       <button id="saveBtn" class="bg-indigo-600 text-white font-medium px-6 py-2.5 rounded-lg shadow hover:bg-indigo-700 transition w-full sm:w-auto">
         Save Processed Data to Sheet
       </button>
@@ -46,13 +58,11 @@
     let knownMappings = {};
     let parsedData = [];
 
-    // 1. Fetch historical mappings from the Google Sheet on page load
+    // 1. Fetch historical mappings
     window.onload = function() {
       google.script.run.withSuccessHandler(function(response) {
         knownMappings = response.mappings;
         const dataList = document.getElementById('descriptionList');
-        
-        // Populate the datalist for the autofill dropdown
         response.descriptions.forEach(desc => {
           const option = document.createElement('option');
           option.value = desc;
@@ -61,7 +71,7 @@
       }).getMappings();
     };
 
-    // 2. Parse the uploaded Excel/XLS file using SheetJS
+    // 2. Parse the uploaded Excel file
     document.getElementById('fileUpload').addEventListener('change', function(e) {
       const file = e.target.files[0];
       if (!file) return;
@@ -70,36 +80,28 @@
       reader.onload = function(e) {
         const data = new Uint8Array(e.target.result);
         const workbook = XLSX.read(data, {type: 'array'});
-        
-        // Grab the first sheet
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        // Convert to JSON array
         const json = XLSX.utils.sheet_to_json(firstSheet, {defval: ""});
-        
         processBankData(json);
       };
       reader.readAsArrayBuffer(file);
     });
 
-    // 3. Match mappings and render the HTML table
+    // 3. Render the table
     function processBankData(json) {
       const tbody = document.getElementById('dataTableBody');
       tbody.innerHTML = '';
       parsedData = [];
 
       json.forEach((row, index) => {
-        // Fallbacks account for standard bank header variations
         const date = row['Date'] || row['Transaction Date'] || row['Value Dt'] || '';
         const narration = row['Narration'] || row['Description'] || row['Particulars'] || '';
         const withdrawal = row['Withdrawal Amt.'] || row['Debit'] || '';
         const deposit = row['Deposit Amt.'] || row['Credit'] || '';
 
-        // Only process rows that have actual transaction data
         if (!date || !narration) return;
 
-        // Auto-assign the short description based on previous uploads
         const autoDesc = knownMappings[narration] || '';
-
         parsedData.push({ date, narration, withdrawal, deposit });
 
         const tr = document.createElement('tr');
@@ -117,32 +119,77 @@
         tbody.appendChild(tr);
       });
 
-      // Reveal the table
       document.getElementById('tableContainer').classList.remove('hidden');
     }
 
-    // 4. Send the finalized data array back to Apps Script
-    document.getElementById('saveBtn').addEventListener('click', function() {
-      const btn = this;
-      btn.innerText = 'Saving to Google Sheets...';
-      btn.disabled = true;
+    // Helper function to wrap google.script.run in a Promise
+    function saveChunk(chunk) {
+      return new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .saveData(chunk);
+      });
+    }
 
+    // 4. Chunk data and save with progress updates
+    document.getElementById('saveBtn').addEventListener('click', async function() {
+      const btn = this;
+      const progressContainer = document.getElementById('progressContainer');
+      const progressBar = document.getElementById('progressBar');
+      const progressText = document.getElementById('progressText');
+
+      // Prepare UI for saving
+      btn.innerText = 'Saving Data...';
+      btn.disabled = true;
+      progressContainer.classList.remove('hidden');
+      progressBar.style.width = '0%';
+      progressText.innerText = '0%';
+
+      // Build the final array to save
       const rowsToSave = parsedData.map((data, index) => {
         const finalDesc = document.getElementById(`desc_${index}`).value.trim();
         return [data.date, data.narration, data.withdrawal, data.deposit, finalDesc];
       });
 
-      google.script.run.withSuccessHandler(function() {
+      const CHUNK_SIZE = 50; // Send 50 rows at a time
+      const totalRows = rowsToSave.length;
+      let rowsProcessed = 0;
+
+      try {
+        // Loop through chunks sequentially
+        for (let i = 0; i < totalRows; i += CHUNK_SIZE) {
+          const chunk = rowsToSave.slice(i, i + CHUNK_SIZE);
+          
+          await saveChunk(chunk); // Wait for this batch to save
+          
+          // Update progress math
+          rowsProcessed += chunk.length;
+          const percentage = Math.round((rowsProcessed / totalRows) * 100);
+          
+          // Update UI
+          progressBar.style.width = percentage + '%';
+          progressText.innerText = percentage + '%';
+        }
+
+        // Success state
         btn.innerText = 'Saved Successfully!';
         btn.classList.replace('bg-indigo-600', 'bg-emerald-600');
         
-        // Reset state after a brief delay
+        // Reset state after 3 seconds
         setTimeout(() => {
            btn.innerText = 'Save Processed Data to Sheet';
            btn.classList.replace('bg-emerald-600', 'bg-indigo-600');
            btn.disabled = false;
+           progressContainer.classList.add('hidden');
         }, 3000);
-      }).saveData(rowsToSave);
+
+      } catch (error) {
+         console.error(error);
+         btn.innerText = 'Error Saving! Try again.';
+         btn.classList.replace('bg-indigo-600', 'bg-red-600');
+         btn.disabled = false;
+      }
     });
   </script>
 </body>
